@@ -108,7 +108,7 @@ class UserHandlers:
         try:
             await update.get_bot().send_message(
                 recipient_id,
-                f"📩 لديك رسالة جديدة من {update.message.from_user.first_name}:\n\n{text}"
+                f"📩  لديك رسالة جديدة من مجهول 🫥 :\n\n{text}"
             )
         except Exception as e:
             logger.warning(f"Could not notify user {recipient_id}: {e}")
