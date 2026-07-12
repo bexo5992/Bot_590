@@ -29,7 +29,7 @@ class CallbackHandlers:
         )
 
     async def handle_inbox(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """عرض صندوق الوارد"""
+        """عرض صندوق الوارد (مجهول)"""
         query = update.callback_query
         await query.answer()
 
@@ -53,10 +53,8 @@ class CallbackHandlers:
 
         for i, msg in enumerate(messages[:5]):
             status = "🟢" if not msg.is_read else "✅"
-            # جلب اسم المرسل
-            sender = await self.db.get_user(msg.from_user_id)
-            sender_name = sender.first_name if sender else f"مستخدم {msg.from_user_id}"
-            text += f"{status} من: **{sender_name}**\n📝 {msg.message[:50]}...\n"
+            # ✅ عرض كمجهول
+            text += f"{status} من: **شخص مجهول 🫥**\n📝 {msg.message[:50]}...\n"
             text += f"📅 {msg.date.strftime('%Y-%m-%d %H:%M')}\n\n"
 
         if len(messages) > 5:
@@ -72,7 +70,7 @@ class CallbackHandlers:
         )
 
     async def handle_inbox_all(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """عرض جميع رسائل الوارد"""
+        """عرض جميع رسائل الوارد (مجهول)"""
         query = update.callback_query
         await query.answer()
 
@@ -88,9 +86,8 @@ class CallbackHandlers:
 
         for msg in messages:
             status = "🟢" if not msg.is_read else "✅"
-            sender = await self.db.get_user(msg.from_user_id)
-            sender_name = sender.first_name if sender else f"مستخدم {msg.from_user_id}"
-            text += f"{status} من: **{sender_name}**\n"
+            # ✅ عرض كمجهول
+            text += f"{status} من: **شخص مجهول 🫥**\n"
             text += f"📝 {msg.message[:100]}\n"
             text += f"📅 {msg.date.strftime('%Y-%m-%d %H:%M')}\n"
             text += "─" * 20 + "\n"
@@ -136,7 +133,7 @@ class CallbackHandlers:
 • 💬 إجمالي الرسائل: {len(messages)}
 • 📅 تاريخ الإنشاء: {datetime.now().strftime('%Y-%m-%d')}
 
-💡 شارك الرابط مع أصدقائك ليتمكنوا من مراسلتك مباشرة!
+💡 شارك الرابط مع أصدقائك ليتمكنوا من مراسلتك!
 """
 
         await query.edit_message_text(
@@ -165,7 +162,7 @@ class CallbackHandlers:
         )
 
     async def handle_send_to(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """معالجة إرسال رسالة لشخص معين من الرابط"""
+        """معالجة إرسال رسالة لشخص معين من الرابط (مجهول)"""
         query = update.callback_query
         await query.answer()
 
@@ -181,7 +178,7 @@ class CallbackHandlers:
         recipient_name = recipient.first_name if recipient else "المستخدم"
 
         await query.edit_message_text(
-            f"✏️ أرسل نص الرسالة التي تريد إرسالها إلى **{recipient_name}**:",
+            f"✏️ أرسل نص الرسالة التي تريد إرسالها إلى **{recipient_name}** (بشكل مجهول):",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("🔙 إلغاء", callback_data="main_menu")]
@@ -211,7 +208,7 @@ class CallbackHandlers:
         await query.message.reply_text(
             f"🔗 **شارك رابطك مع الأصدقاء:**\n\n"
             f"`{user_link}`\n\n"
-            f"عندما يدخل شخص عبر هذا الرابط، يمكنه مراسلتك مباشرة!",
+            f"عندما يدخل شخص عبر هذا الرابط، يمكنه مراسلتك بشكل مجهول!",
             parse_mode="Markdown"
         )
         
