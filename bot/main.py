@@ -15,7 +15,7 @@ from bot.config import Config
 from bot.utils.logger import logger
 from bot.database.models import init_database
 from bot.services.database import DatabaseService
-from bot.handlers.user import UserHandlers, WAITING_RECIPIENT, WAITING_MESSAGE  # <--- أضف هذا
+from bot.handlers.user import UserHandlers, WAITING_RECIPIENT, WAITING_MESSAGE
 from bot.handlers.admin import AdminHandlers
 from bot.handlers.callbacks import CallbackHandlers
 from bot.middlewares.rate_limit import rate_limit_decorator
@@ -45,12 +45,20 @@ class BotApp:
         logger.info("🤖 Bot started successfully!")
         logger.info(f"👑 Admin ID: {self.admin_id}")
 
+        # إزالة أي Webhook قديم
+        try:
+            await application.bot.delete_webhook(drop_pending_updates=True)
+            logger.info("✅ Webhook removed")
+        except Exception as e:
+            logger.warning(f"Could not remove webhook: {e}")
+
         # إرسال إشعار للأدمن
         try:
             await application.bot.send_message(
                 self.admin_id,
                 "✅ **البوت يعمل الآن!**\n"
-                f"📅 {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+                f"📅 {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
+                f"🔗 روابط الدعوة مفعلة!",
                 parse_mode="Markdown"
             )
         except Exception as e:
@@ -65,6 +73,10 @@ class BotApp:
                 CallbackQueryHandler(
                     self.user_handlers.handle_send,
                     pattern="^send$"
+                ),
+                CallbackQueryHandler(
+                    self.callback_handlers.handle_send_to,
+                    pattern="^send_to_"
                 )
             ],
             states={
@@ -115,6 +127,18 @@ class BotApp:
             CallbackQueryHandler(
                 self.callback_handlers.handle_inbox_all,
                 pattern="^inbox_all$"
+            ),
+            CallbackQueryHandler(
+                self.callback_handlers.handle_share_link,
+                pattern="^share_link$"
+            ),
+            CallbackQueryHandler(
+                self.callback_handlers.handle_copy_link,
+                pattern="^copy_link$"
+            ),
+            CallbackQueryHandler(
+                self.callback_handlers.handle_refresh_link,
+                pattern="^refresh_link$"
             ),
 
             # دوال الأدمن
