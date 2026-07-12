@@ -1,224 +1,154 @@
-# bot/handlers/user.py
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
-from telegram.ext import ContextTypes, ConversationHandler
-from bot.services.database import DatabaseService
+# bot/main.py
+import asyncio
+from datetime import datetime
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    CallbackQueryHandler,
+    MessageHandler,
+    ConversationHandler,
+    filters
+)
+from telegram.ext import ContextTypes
+
+from bot.config import Config
 from bot.utils.logger import logger
-from bot.utils.security import generate_link_code
+from bot.database.models import init_database
+from bot.services.database import DatabaseService
+from bot.handlers.user import UserHandlers
+from bot.handlers.admin import AdminHandlers
+from bot.handlers.callbacks import CallbackHandlers
 from bot.middlewares.rate_limit import rate_limit_decorator
 from bot.keyboards.buttons import get_main_keyboard
 
-# حالات المحادثة
-WAITING_RECIPIENT, WAITING_MESSAGE = range(2)
+class BotApp:
+    """تطبيق البوت الرئيسي"""
 
-class UserHandlers:
-    """معالجات المستخدمين"""
+    def __init__(self):
+        self.token = Config.MAIN_BOT_TOKEN
+        self.admin_id = Config.ADMIN_ID
 
-    def __init__(self, db_service: DatabaseService):
-        self.db = db_service
+        # تهيئة قاعدة البيانات
+        session, engine = init_database()
+        self.db = DatabaseService(session)
 
-    async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """معالجة أمر /start"""
-        user = update.effective_user
+        # تهيئة المعالجات
+        self.user_handlers = UserHandlers(self.db)
+        self.admin_handlers = AdminHandlers(self.db)
+        self.callback_handlers = CallbackHandlers(self.db)
 
-        # حفظ المستخدم
-        await self.db.save_user(
-            user_id=user.id,
-            username=user.username,
-            first_name=user.first_name,
-            last_name=user.last_name
-        )
+        # تهيئة التطبيق
+        self.app = None
 
-        logger.info(f"User started bot: {user.id} ({user.username})")
+    async def post_init(self, application):
+        """تهيئة ما بعد البدء"""
+        logger.info("🤖 Bot started successfully!")
+        logger.info(f"👑 Admin ID: {self.admin_id}")
 
-        # رسالة الترحيب
-        welcome_text = f"""
-👋 مرحباً {user.first_name}!
-
-اختر أحد الخيارات من القائمة أدناه:
-
-📨 **إرسال رسالة** - أرسل رسالة لأي مستخدم
-📩 **صندوق الوارد** - عرض الرسائل الواردة
-🔗 **رابط رسائلي** - احصل على رابط دعوة خاص بك
-⚙️ **الإعدادات** - إعدادات الحساب
-"""
-
-        keyboard = await get_main_keyboard(user.id, self.db)
-
-        await update.message.reply_text(
-            welcome_text,
-            parse_mode="Markdown",
-            reply_markup=keyboard
-        )
-
-    @rate_limit_decorator
-    async def handle_send(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """بدء عملية إرسال رسالة"""
-        query = update.callback_query
-        await query.answer()
-
-        await query.edit_message_text(
-            "✏️ أرسل معرف المستخدم (ID):"
-        )
-
-        return WAITING_RECIPIENT
-
-    async def process_recipient(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """معالجة معرف المستلم"""
-        user_id = update.message.text.strip()
-
+        # إرسال إشعار للأدمن
         try:
-            recipient_id = int(user_id)
-
-            # التحقق من وجود المستخدم
-            user = await self.db.get_user(recipient_id)
-            if not user:
-                await update.message.reply_text("❌ المستخدم غير موجود!")
-                return ConversationHandler.END
-
-            context.user_data['recipient'] = recipient_id
-
-            await update.message.reply_text(
-                "📝 أرسل نص الرسالة:"
-            )
-
-            return WAITING_MESSAGE
-
-        except ValueError:
-            await update.message.reply_text("❌ المعرف غير صحيح! يجب أن يكون أرقاماً فقط.")
-            return WAITING_RECIPIENT
-
-    async def process_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """معالجة نص الرسالة"""
-        text = update.message.text
-        recipient_id = context.user_data.get('recipient')
-        from_user_id = update.message.from_user.id
-
-        if len(text) > 4096:
-            await update.message.reply_text("❌ الرسالة طويلة جداً (الحد الأقصى 4096 حرف)")
-            return WAITING_MESSAGE
-
-        # حفظ الرسالة
-        await self.db.save_message(
-            from_user=from_user_id,
-            to_user=recipient_id,
-            message=text
-        )
-
-        # إرسال إشعار للمستلم
-        try:
-            await update.get_bot().send_message(
-                recipient_id,
-                f"📩 لديك رسالة جديدة من {update.message.from_user.first_name}:\n\n{text}"
+            await application.bot.send_message(
+                self.admin_id,
+                "✅ **البوت يعمل الآن!**\n"
+                f"📅 {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+                parse_mode="Markdown"
             )
         except Exception as e:
-            logger.warning(f"Could not notify user {recipient_id}: {e}")
+            logger.warning(f"Could not notify admin: {e}")
 
-        await update.message.reply_text("✅ تم إرسال الرسالة بنجاح!")
+    def setup_handlers(self):
+        """إعداد المعالجات"""
 
-        return ConversationHandler.END
-
-    async def handle_inbox(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """عرض صندوق الوارد"""
-        query = update.callback_query
-        await query.answer()
-
-        user_id = query.from_user.id
-
-        # جلب الرسائل غير المقروءة
-        unread_count = await self.db.get_unread_count(user_id)
-
-        # جلب آخر 5 رسائل
-        messages = await self.db.get_user_messages(user_id, limit=5)
-
-        if not messages:
-            await query.edit_message_text(
-                "📭 لا توجد رسائل في صندوق الوارد",
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")
-                ]])
-            )
-            return
-
-        text = f"📩 **صندوق الوارد** (غير مقروء: {unread_count})\n\n"
-
-        for msg in messages:
-            status = "🟢" if not msg.is_read else "✅"
-            text += f"{status} من: `{msg.from_user_id}`\n📝 {msg.message[:50]}...\n📅 {msg.date.strftime('%Y-%m-%d %H:%M')}\n\n"
-
-        await query.edit_message_text(
-            text,
-            parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("📖 عرض الكل", callback_data="inbox_all"),
-                InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")
-            ]])
+        # محادثة إرسال الرسالة
+        send_conversation = ConversationHandler(
+            entry_points=[
+                CallbackQueryHandler(
+                    self.user_handlers.handle_send,
+                    pattern="^send$"
+                )
+            ],
+            states={
+                WAITING_RECIPIENT: [
+                    MessageHandler(
+                        filters.TEXT & ~filters.COMMAND,
+                        self.user_handlers.process_recipient
+                    )
+                ],
+                WAITING_MESSAGE: [
+                    MessageHandler(
+                        filters.TEXT & ~filters.COMMAND,
+                        self.user_handlers.process_message
+                    )
+                ]
+            },
+            fallbacks=[
+                CommandHandler('cancel', self.user_handlers.cancel)
+            ]
         )
 
-    async def handle_my_link(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """عرض الرابط الخاص"""
-        query = update.callback_query
-        await query.answer()
+        # إضافة المعالجات
+        handlers = [
+            # الأوامر
+            CommandHandler('start', self.user_handlers.start),
+            CommandHandler('help', self.user_handlers.help_command),
 
-        user_id = query.from_user.id
+            # المحادثات
+            send_conversation,
 
-        # جلب الرابط أو إنشائه
-        link = await self.db.get_user_link(user_id)
-        if not link:
-            code = generate_link_code()
-            await self.db.save_link(user_id, code)
-            link = code
+            # الكالبات
+            CallbackQueryHandler(
+                self.callback_handlers.handle_main_menu,
+                pattern="^main_menu$"
+            ),
+            CallbackQueryHandler(
+                self.callback_handlers.handle_inbox,
+                pattern="^inbox$"
+            ),
+            CallbackQueryHandler(
+                self.callback_handlers.handle_my_link,
+                pattern="^my_link$"
+            ),
+            CallbackQueryHandler(
+                self.callback_handlers.handle_settings,
+                pattern="^settings$"
+            ),
+            CallbackQueryHandler(
+                self.callback_handlers.handle_inbox_all,
+                pattern="^inbox_all$"
+            ),
 
-        bot_username = (await query.get_bot().get_me()).username
-        user_link = f"https://t.me/{bot_username}?start={link}"
+            # دوال الأدمن
+            CommandHandler('stats', self.admin_handlers.stats),
+            CommandHandler('export', self.admin_handlers.export_data),
+            CommandHandler('broadcast', self.admin_handlers.broadcast),
+            CommandHandler('ban', self.admin_handlers.ban_user),
+        ]
 
-        text = f"""
-🔗 **رابطك الخاص**
+        for handler in handlers:
+            self.app.add_handler(handler)
 
-`{user_link}`
+    def run(self):
+        """تشغيل البوت"""
+        logger.info("🚀 Starting bot...")
 
-💡 شارك الرابط مع أصدقائك ليتمكنوا من مراسلتك!
-"""
-
-        await query.edit_message_text(
-            text,
-            parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("📋 نسخ الرابط", callback_data="copy_link"),
-                InlineKeyboardButton("🔄 تجديد الرابط", callback_data="refresh_link"),
-                InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")
-            ]])
+        # تهيئة التطبيق
+        self.app = (
+            ApplicationBuilder()
+            .token(self.token)
+            .post_init(self.post_init)
+            .concurrent_updates(True)
+            .build()
         )
 
-    async def cancel(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """إلغاء المحادثة الحالية"""
-        user_id = update.effective_user.id
-        
-        # إنهاء المحادثة
-        context.user_data.clear()
-        
-        # رسالة إلغاء مع القائمة الرئيسية
-        await update.message.reply_text(
-            "❌ تم إلغاء العملية.",
-            reply_markup=await get_main_keyboard(user_id, self.db)
+        # إعداد المعالجات
+        self.setup_handlers()
+
+        # تشغيل البوت
+        self.app.run_polling(
+            allowed_updates=['message', 'callback_query'],
+            drop_pending_updates=True
         )
-        
-        return ConversationHandler.END
 
-    async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """عرض المساعدة"""
-        help_text = """
-📖 **مساعدة البوت**
-
-الأوامر المتاحة:
-/start - عرض القائمة الرئيسية
-/help - عرض هذه المساعدة
-
-الخصائص:
-📨 **إرسال رسالة** - أرسل رسالة لأي مستخدم باستخدام معرفه
-📩 **صندوق الوارد** - عرض واستعراض الرسائل الواردة
-🔗 **رابط رسائلي** - احصل على رابط دعوة خاص بك
-⚙️ **الإعدادات** - إعدادات الحساب
-
-🔐 **الخصوصية**: رسائلك آمنة ولا يراها أحد غيرك.
-"""
-        await update.message.reply_text(help_text, parse_mode="Markdown")
+if __name__ == "__main__":
+    bot_app = BotApp()
+    bot_app.run()
