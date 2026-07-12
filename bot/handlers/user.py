@@ -19,6 +19,7 @@ class UserHandlers:
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """معالجة أمر /start"""
         user = update.effective_user
+        text = update.message.text
 
         # حفظ المستخدم
         await self.db.save_user(
@@ -30,8 +31,51 @@ class UserHandlers:
 
         logger.info(f"User started bot: {user.id} ({user.username})")
 
-        # رسالة الترحيب
-        welcome_text = f"""
+        # التحقق من وجود رمز رابط
+        link_code = None
+        inviter_id = None
+
+        if len(text.split()) > 1:
+            link_code = text.split()[1]
+            # البحث عن صاحب الرابط
+            link = await self.db.get_user_by_link(link_code)
+            if link:
+                inviter_id = link.user_id
+                logger.info(f"User {user.id} joined via link from {inviter_id}")
+
+        # بناء الرسالة حسب وجود رابط أم لا
+        if inviter_id:
+            # جلب اسم صاحب الرابط
+            inviter = await self.db.get_user(inviter_id)
+            inviter_name = inviter.first_name if inviter else "المستخدم"
+            
+            # حفظ في الجلسة أن هذا المستخدم جاء عبر رابط
+            context.user_data['inviter_id'] = inviter_id
+
+            welcome_text = f"""
+👋 مرحباً {user.first_name}!
+
+لقد انضممت عبر رابط {inviter_name}.
+
+📨 **يمكنك إرسال رسالة له مباشرة:**
+"""
+
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton(f"📨 راسل {inviter_name}", callback_data=f"send_to_{inviter_id}")],
+                [InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="main_menu")]
+            ])
+
+            # إشعار لصاحب الرابط
+            try:
+                await update.get_bot().send_message(
+                    inviter_id,
+                    f"🎉 قام {user.first_name} بالانضمام عبر رابطك!"
+                )
+            except Exception as e:
+                logger.warning(f"Could not notify inviter {inviter_id}: {e}")
+
+        else:
+            welcome_text = f"""
 👋 مرحباً {user.first_name}!
 
 اختر أحد الخيارات من القائمة أدناه:
@@ -41,8 +85,7 @@ class UserHandlers:
 🔗 **رابط رسائلي** - احصل على رابط دعوة خاص بك
 ⚙️ **الإعدادات** - إعدادات الحساب
 """
-
-        keyboard = await get_main_keyboard(user.id, self.db)
+            keyboard = await get_main_keyboard(user.id, self.db)
 
         await update.message.reply_text(
             welcome_text,
@@ -93,27 +136,50 @@ class UserHandlers:
         recipient_id = context.user_data.get('recipient')
         from_user_id = update.message.from_user.id
 
+        if not recipient_id:
+            await update.message.reply_text("❌ حدث خطأ، يرجى المحاولة مرة أخرى.")
+            return ConversationHandler.END
+
         if len(text) > 4096:
             await update.message.reply_text("❌ الرسالة طويلة جداً (الحد الأقصى 4096 حرف)")
             return WAITING_MESSAGE
 
         # حفظ الرسالة
-        await self.db.save_message(
+        msg = await self.db.save_message(
             from_user=from_user_id,
             to_user=recipient_id,
             message=text
         )
 
+        # جلب معلومات المرسل
+        sender = await self.db.get_user(from_user_id)
+        
+        # تنسيق اسم المرسل
+        if sender and sender.first_name:
+            sender_name = sender.first_name
+            if sender.last_name:
+                sender_name += f" {sender.last_name}"
+        else:
+            sender_name = update.message.from_user.first_name or f"المستخدم {from_user_id}"
+
+        # إضافة اسم المستخدم إذا موجود
+        if update.message.from_user.username:
+            sender_name += f" (@{update.message.from_user.username})"
+
         # إرسال إشعار للمستلم
         try:
             await update.get_bot().send_message(
                 recipient_id,
-                f"📩  لديك رسالة جديدة من مجهول 🫥 :\n\n{text}"
+                f"📩 لديك رسالة جديدة من **{sender_name}**:\n\n{text}",
+                parse_mode="Markdown"
             )
         except Exception as e:
             logger.warning(f"Could not notify user {recipient_id}: {e}")
 
         await update.message.reply_text("✅ تم إرسال الرسالة بنجاح!")
+
+        # تنظيف الجلسة
+        context.user_data.pop('recipient', None)
 
         return ConversationHandler.END
 
@@ -143,7 +209,10 @@ class UserHandlers:
 
         for msg in messages:
             status = "🟢" if not msg.is_read else "✅"
-            text += f"{status} من: `{msg.from_user_id}`\n📝 {msg.message[:50]}...\n📅 {msg.date.strftime('%Y-%m-%d %H:%M')}\n\n"
+            # جلب اسم المرسل
+            sender = await self.db.get_user(msg.from_user_id)
+            sender_name = sender.first_name if sender else f"مستخدم {msg.from_user_id}"
+            text += f"{status} من: **{sender_name}**\n📝 {msg.message[:50]}...\n📅 {msg.date.strftime('%Y-%m-%d %H:%M')}\n\n"
 
         await query.edit_message_text(
             text,
@@ -171,22 +240,32 @@ class UserHandlers:
         bot_username = (await query.get_bot().get_me()).username
         user_link = f"https://t.me/{bot_username}?start={link}"
 
+        # إحصائيات المستخدم
+        unread_count = await self.db.get_unread_count(user_id)
+        messages_count = len(await self.db.get_user_messages(user_id, limit=1000))
+
         text = f"""
 🔗 **رابطك الخاص**
 
 `{user_link}`
 
-💡 شارك الرابط مع أصدقائك ليتمكنوا من مراسلتك!
+📊 **إحصائياتك:**
+• 📩 رسائل غير مقروءة: {unread_count}
+• 💬 إجمالي الرسائل: {messages_count}
+• 📅 تاريخ الإنشاء: {datetime.now().strftime('%Y-%m-%d')}
+
+💡 شارك الرابط مع أصدقائك ليتمكنوا من مراسلتك مباشرة!
 """
 
         await query.edit_message_text(
             text,
             parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("📋 نسخ الرابط", callback_data="copy_link"),
-                InlineKeyboardButton("🔄 تجديد الرابط", callback_data="refresh_link"),
-                InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")
-            ]])
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("📋 نسخ الرابط", callback_data="copy_link")],
+                [InlineKeyboardButton("🔄 تجديد الرابط", callback_data="refresh_link")],
+                [InlineKeyboardButton("📤 مشاركة الرابط", callback_data="share_link")],
+                [InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")]
+            ])
         )
 
     async def cancel(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -220,5 +299,6 @@ class UserHandlers:
 ⚙️ **الإعدادات** - إعدادات الحساب
 
 🔐 **الخصوصية**: رسائلك آمنة ولا يراها أحد غيرك.
+💡 **روابط الدعوة**: عند مشاركة رابطك، يمكن للآخرين مراسلتك مباشرة!
 """
         await update.message.reply_text(help_text, parse_mode="Markdown")
