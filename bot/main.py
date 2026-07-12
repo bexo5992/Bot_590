@@ -15,7 +15,7 @@ from bot.config import Config
 from bot.utils.logger import logger
 from bot.database.models import init_database
 from bot.services.database import DatabaseService
-from bot.handlers.user import UserHandlers
+from bot.handlers.user import UserHandlers, WAITING_RECIPIENT, WAITING_MESSAGE  # <--- أضف هذا
 from bot.handlers.admin import AdminHandlers
 from bot.handlers.callbacks import CallbackHandlers
 from bot.middlewares.rate_limit import rate_limit_decorator
