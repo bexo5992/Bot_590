@@ -58,7 +58,8 @@ class BotApp:
                 self.admin_id,
                 "✅ **البوت يعمل الآن!**\n"
                 f"📅 {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
-                f"🔗 روابط الدعوة مفعلة!",
+                f"🔗 روابط الدعوة مفعلة!\n"
+                f"🫥 البوت يعمل بشكل مجهول بالكامل!",
                 parse_mode="Markdown"
             )
         except Exception as e:
@@ -107,7 +108,7 @@ class BotApp:
             # المحادثات
             send_conversation,
 
-            # ✅ الكالبات الرئيسية
+            # الكالبات الرئيسية
             CallbackQueryHandler(
                 self.callback_handlers.handle_main_menu,
                 pattern="^main_menu$"
@@ -140,8 +141,6 @@ class BotApp:
                 self.callback_handlers.handle_refresh_link,
                 pattern="^refresh_link$"
             ),
-
-            # ✅ تأكد من وجود هذا المعالج
             CallbackQueryHandler(
                 self.callback_handlers.handle_send_to,
                 pattern="^send_to_"
