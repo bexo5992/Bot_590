@@ -69,7 +69,7 @@ class UserHandlers:
             try:
                 await update.get_bot().send_message(
                     inviter_id,
-                    f"🎉 قام {user.first_name} بالانضمام عبر رابطك!"
+                    f"🎉 قام شخص بالانضمام عبر رابطك!"
                 )
             except Exception as e:
                 logger.warning(f"Could not notify inviter {inviter_id}: {e}")
