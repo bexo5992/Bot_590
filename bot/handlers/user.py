@@ -65,11 +65,11 @@ class UserHandlers:
                 [InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="main_menu")]
             ])
 
-            # إشعار لصاحب الرابط
+            # ✅ إشعار مجهول لصاحب الرابط (لا يظهر اسم الداخل)
             try:
                 await update.get_bot().send_message(
                     inviter_id,
-                    f"🎉 قام شخص بالانضمام عبر رابطك!"
+                    f"🎉 شخص جديد انضم عبر رابطك!"
                 )
             except Exception as e:
                 logger.warning(f"Could not notify inviter {inviter_id}: {e}")
@@ -131,7 +131,7 @@ class UserHandlers:
             return WAITING_RECIPIENT
 
     async def process_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """معالجة نص الرسالة"""
+        """معالجة نص الرسالة (مجهول)"""
         text = update.message.text
         recipient_id = context.user_data.get('recipient')
         from_user_id = update.message.from_user.id
@@ -151,32 +151,18 @@ class UserHandlers:
             message=text
         )
 
-        # جلب معلومات المرسل
-        sender = await self.db.get_user(from_user_id)
-        
-        # تنسيق اسم المرسل
-        if sender and sender.first_name:
-            sender_name = sender.first_name
-            if sender.last_name:
-                sender_name += f" {sender.last_name}"
-        else:
-            sender_name = update.message.from_user.first_name or f"المستخدم {from_user_id}"
-
-        # إضافة اسم المستخدم إذا موجود
-        if update.message.from_user.username:
-            sender_name += f" (@{update.message.from_user.username})"
-
-        # إرسال إشعار للمستلم
+        # ✅ إرسال إشعار مجهول للمستلم (لا يظهر اسم المرسل)
         try:
             await update.get_bot().send_message(
                 recipient_id,
-                f"📩 لديك رسالة جديدة من **{sender_name}**:\n\n{text}",
+                f"📩 لديك رسالة جديدة (مرسل مجهول 🫥):\n\n{text}",
                 parse_mode="Markdown"
             )
         except Exception as e:
             logger.warning(f"Could not notify user {recipient_id}: {e}")
 
-        await update.message.reply_text("✅ تم إرسال الرسالة بنجاح!")
+        # ✅ إشعار للمرسل بأن الرسالة أُرسلت
+        await update.message.reply_text("✅ تم إرسال رسالتك بشكل مجهول!")
 
         # تنظيف الجلسة
         context.user_data.pop('recipient', None)
@@ -184,7 +170,7 @@ class UserHandlers:
         return ConversationHandler.END
 
     async def handle_inbox(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """عرض صندوق الوارد"""
+        """عرض صندوق الوارد (مجهول)"""
         query = update.callback_query
         await query.answer()
 
@@ -209,10 +195,8 @@ class UserHandlers:
 
         for msg in messages:
             status = "🟢" if not msg.is_read else "✅"
-            # جلب اسم المرسل
-            sender = await self.db.get_user(msg.from_user_id)
-            sender_name = sender.first_name if sender else f"مستخدم {msg.from_user_id}"
-            text += f"{status} من: **{شخص مجهول 🫥🫥}**\n📝 {msg.message[:50]}...\n📅 {msg.date.strftime('%Y-%m-%d %H:%M')}\n\n"
+            # ✅ عرض كمجهول (بدون اسم المرسل)
+            text += f"{status} من: **شخص مجهول 🫥**\n📝 {msg.message[:50]}...\n📅 {msg.date.strftime('%Y-%m-%d %H:%M')}\n\n"
 
         await query.edit_message_text(
             text,
@@ -242,8 +226,9 @@ class UserHandlers:
 
         # إحصائيات المستخدم
         unread_count = await self.db.get_unread_count(user_id)
-        messages_count = len(await self.db.get_user_messages(user_id, limit=1000))
+        messages = await self.db.get_user_messages(user_id, limit=1000)
 
+        from datetime import datetime
         text = f"""
 🔗 **رابطك الخاص**
 
@@ -251,10 +236,10 @@ class UserHandlers:
 
 📊 **إحصائياتك:**
 • 📩 رسائل غير مقروءة: {unread_count}
-• 💬 إجمالي الرسائل: {messages_count}
+• 💬 إجمالي الرسائل: {len(messages)}
 • 📅 تاريخ الإنشاء: {datetime.now().strftime('%Y-%m-%d')}
 
-💡 شارك الرابط مع أصدقائك ليتمكنوا من مراسلتك مباشرة!
+💡 شارك الرابط مع أصدقائك ليتمكنوا من مراسلتك!
 """
 
         await query.edit_message_text(
@@ -293,12 +278,12 @@ class UserHandlers:
 /help - عرض هذه المساعدة
 
 الخصائص:
-📨 **إرسال رسالة** - أرسل رسالة لأي مستخدم باستخدام معرفه
-📩 **صندوق الوارد** - عرض واستعراض الرسائل الواردة
+📨 **إرسال رسالة** - أرسل رسالة مجهولة لأي مستخدم
+📩 **صندوق الوارد** - عرض واستعراض الرسائل المجهولة
 🔗 **رابط رسائلي** - احصل على رابط دعوة خاص بك
 ⚙️ **الإعدادات** - إعدادات الحساب
 
-🔐 **الخصوصية**: رسائلك آمنة ولا يراها أحد غيرك.
-💡 **روابط الدعوة**: عند مشاركة رابطك، يمكن للآخرين مراسلتك مباشرة!
+🔐 **الخصوصية**: رسائلك مجهولة بالكامل ولا يظهر اسمك!
+💡 **روابط الدعوة**: عند مشاركة رابطك، يمكن للآخرين مراسلتك بشكل مجهول.
 """
         await update.message.reply_text(help_text, parse_mode="Markdown")
