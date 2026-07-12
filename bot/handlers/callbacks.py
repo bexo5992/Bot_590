@@ -1,41 +1,44 @@
 # bot/handlers/callbacks.py
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
-from telegram.ext import ContextTypes
+from telegram.ext import ContextTypes, ConversationHandler
 from bot.services.database import DatabaseService
 from bot.utils.logger import logger
 from bot.keyboards.buttons import get_main_keyboard
 
+# استيراد حالات المحادثة
+from bot.handlers.user import WAITING_MESSAGE
+
 class CallbackHandlers:
     """معالجات الكالبات"""
-    
+
     def __init__(self, db_service: DatabaseService):
         self.db = db_service
-    
+
     async def handle_main_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """العودة للقائمة الرئيسية"""
         query = update.callback_query
         await query.answer()
-        
+
         user_id = query.from_user.id
         keyboard = await get_main_keyboard(user_id, self.db)
-        
+
         await query.edit_message_text(
             "🏠 **القائمة الرئيسية**\nاختر أحد الخيارات:",
             parse_mode="Markdown",
             reply_markup=keyboard
         )
-    
+
     async def handle_inbox(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """عرض صندوق الوارد"""
         query = update.callback_query
         await query.answer()
-        
+
         user_id = query.from_user.id
-        
+
         # جلب الرسائل
         messages = await self.db.get_user_messages(user_id, limit=10)
         unread_count = await self.db.get_unread_count(user_id)
-        
+
         if not messages:
             await query.edit_message_text(
                 "📭 **صندوق الوارد فارغ**",
@@ -45,17 +48,20 @@ class CallbackHandlers:
                 ]])
             )
             return
-        
+
         text = f"📩 **صندوق الوارد** (غير مقروء: {unread_count})\n\n"
-        
+
         for i, msg in enumerate(messages[:5]):
             status = "🟢" if not msg.is_read else "✅"
-            text += f"{status} من: `{msg.from_user_id}`\n📝 {msg.message[:50]}...\n"
+            # جلب اسم المرسل
+            sender = await self.db.get_user(msg.from_user_id)
+            sender_name = sender.first_name if sender else f"مستخدم {msg.from_user_id}"
+            text += f"{status} من: **{sender_name}**\n📝 {msg.message[:50]}...\n"
             text += f"📅 {msg.date.strftime('%Y-%m-%d %H:%M')}\n\n"
-        
+
         if len(messages) > 5:
             text += f"\n📌 عرض 5 من {len(messages)} رسائل"
-        
+
         await query.edit_message_text(
             text,
             parse_mode="Markdown",
@@ -64,48 +70,91 @@ class CallbackHandlers:
                 [InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")]
             ])
         )
-    
+
+    async def handle_inbox_all(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """عرض جميع رسائل الوارد"""
+        query = update.callback_query
+        await query.answer()
+
+        user_id = query.from_user.id
+
+        messages = await self.db.get_user_messages(user_id, limit=50)
+
+        if not messages:
+            await query.edit_message_text("📭 لا توجد رسائل")
+            return
+
+        text = "📩 **جميع الرسائل**\n\n"
+
+        for msg in messages:
+            status = "🟢" if not msg.is_read else "✅"
+            sender = await self.db.get_user(msg.from_user_id)
+            sender_name = sender.first_name if sender else f"مستخدم {msg.from_user_id}"
+            text += f"{status} من: **{sender_name}**\n"
+            text += f"📝 {msg.message[:100]}\n"
+            text += f"📅 {msg.date.strftime('%Y-%m-%d %H:%M')}\n"
+            text += "─" * 20 + "\n"
+
+        await query.edit_message_text(
+            text[:4000],  # حد تيليجرام
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("🔙 رجوع", callback_data="inbox")
+            ]])
+        )
+
     async def handle_my_link(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """عرض الرابط الخاص"""
         query = update.callback_query
         await query.answer()
-        
+
         user_id = query.from_user.id
-        
+
         # جلب أو إنشاء الرابط
         from bot.utils.security import generate_link_code
-        
+        from datetime import datetime
+
         link_code = await self.db.get_user_link(user_id)
         if not link_code:
             link_code = generate_link_code()
             await self.db.save_link(user_id, link_code)
-        
+
         bot_username = (await query.get_bot().get_me()).username
         user_link = f"https://t.me/{bot_username}?start={link_code}"
-        
+
+        # إحصائيات
+        unread_count = await self.db.get_unread_count(user_id)
+        messages = await self.db.get_user_messages(user_id, limit=1000)
+
         text = f"""
 🔗 **رابطك الخاص**
 
 `{user_link}`
 
-💡 شارك الرابط مع أصدقائك ليتمكنوا من مراسلتك!
+📊 **إحصائياتك:**
+• 📩 رسائل غير مقروءة: {unread_count}
+• 💬 إجمالي الرسائل: {len(messages)}
+• 📅 تاريخ الإنشاء: {datetime.now().strftime('%Y-%m-%d')}
+
+💡 شارك الرابط مع أصدقائك ليتمكنوا من مراسلتك مباشرة!
 """
-        
+
         await query.edit_message_text(
             text,
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("📋 نسخ الرابط", callback_data="copy_link")],
                 [InlineKeyboardButton("🔄 تجديد الرابط", callback_data="refresh_link")],
+                [InlineKeyboardButton("📤 مشاركة الرابط", callback_data="share_link")],
                 [InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")]
             ])
         )
-    
+
     async def handle_settings(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """عرض الإعدادات"""
         query = update.callback_query
         await query.answer()
-        
+
         await query.edit_message_text(
             "⚙️ **الإعدادات**\nاختر الخيار المناسب:",
             parse_mode="Markdown",
@@ -114,33 +163,107 @@ class CallbackHandlers:
                 [InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")]
             ])
         )
-    
-    async def handle_inbox_all(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """عرض جميع رسائل الوارد"""
+
+    async def handle_send_to(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """معالجة إرسال رسالة لشخص معين من الرابط"""
+        query = update.callback_query
+        await query.answer()
+
+        # استخراج المعرف من الكولباك (format: send_to_123456789)
+        inviter_id = int(query.data.split("_")[2])
+        
+        # حفظ المعرف في الجلسة
+        context.user_data['recipient'] = inviter_id
+        context.user_data['from_link'] = True
+
+        # جلب اسم المستلم
+        recipient = await self.db.get_user(inviter_id)
+        recipient_name = recipient.first_name if recipient else "المستخدم"
+
+        await query.edit_message_text(
+            f"✏️ أرسل نص الرسالة التي تريد إرسالها إلى **{recipient_name}**:",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 إلغاء", callback_data="main_menu")]
+            ])
+        )
+
+        # العودة إلى حالة انتظار الرسالة
+        return WAITING_MESSAGE
+
+    async def handle_share_link(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """مشاركة الرابط"""
+        query = update.callback_query
+        await query.answer()
+        
+        user_id = query.from_user.id
+        link_code = await self.db.get_user_link(user_id)
+        
+        if not link_code:
+            from bot.utils.security import generate_link_code
+            link_code = generate_link_code()
+            await self.db.save_link(user_id, link_code)
+        
+        bot_username = (await query.get_bot().get_me()).username
+        user_link = f"https://t.me/{bot_username}?start={link_code}"
+        
+        # إرسال رابط للمشاركة
+        await query.message.reply_text(
+            f"🔗 **شارك رابطك مع الأصدقاء:**\n\n"
+            f"`{user_link}`\n\n"
+            f"عندما يدخل شخص عبر هذا الرابط، يمكنه مراسلتك مباشرة!",
+            parse_mode="Markdown"
+        )
+        
+        await query.answer("✅ تم إرسال رابط المشاركة!")
+
+    async def handle_copy_link(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """نسخ الرابط"""
+        query = update.callback_query
+        await query.answer()
+        
+        user_id = query.from_user.id
+        link_code = await self.db.get_user_link(user_id)
+        
+        if not link_code:
+            from bot.utils.security import generate_link_code
+            link_code = generate_link_code()
+            await self.db.save_link(user_id, link_code)
+        
+        bot_username = (await query.get_bot().get_me()).username
+        user_link = f"https://t.me/{bot_username}?start={link_code}"
+        
+        await query.message.reply_text(
+            f"📋 **تم نسخ الرابط:**\n\n"
+            f"`{user_link}`\n\n"
+            f"يمكنك مشاركته مع أصدقائك!",
+            parse_mode="Markdown"
+        )
+        
+        await query.answer("✅ تم نسخ الرابط!")
+
+    async def handle_refresh_link(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """تجديد الرابط"""
         query = update.callback_query
         await query.answer()
         
         user_id = query.from_user.id
         
-        messages = await self.db.get_user_messages(user_id, limit=50)
+        from bot.utils.security import generate_link_code
+        new_code = generate_link_code()
+        await self.db.save_link(user_id, new_code)
         
-        if not messages:
-            await query.edit_message_text("📭 لا توجد رسائل")
-            return
-        
-        text = "📩 **جميع الرسائل**\n\n"
-        
-        for msg in messages:
-            status = "🟢" if not msg.is_read else "✅"
-            text += f"{status} من: `{msg.from_user_id}`\n"
-            text += f"📝 {msg.message[:100]}\n"
-            text += f"📅 {msg.date.strftime('%Y-%m-%d %H:%M')}\n"
-            text += "─" * 20 + "\n"
+        bot_username = (await query.get_bot().get_me()).username
+        user_link = f"https://t.me/{bot_username}?start={new_code}"
         
         await query.edit_message_text(
-            text[:4000],  # حد تيليجرام
+            f"🔄 **تم تجديد رابطك!**\n\n"
+            f"`{user_link}`\n\n"
+            f"⚠️ الرابط القديم لم يعد يعمل.",
             parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("🔙 رجوع", callback_data="inbox")
-            ]])
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 رجوع", callback_data="my_link")]
+            ])
         )
+        
+        await query.answer("✅ تم تجديد الرابط!")
