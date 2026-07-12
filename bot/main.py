@@ -107,7 +107,7 @@ class BotApp:
             # المحادثات
             send_conversation,
 
-            # الكالبات
+            # ✅ الكالبات الرئيسية
             CallbackQueryHandler(
                 self.callback_handlers.handle_main_menu,
                 pattern="^main_menu$"
@@ -139,6 +139,12 @@ class BotApp:
             CallbackQueryHandler(
                 self.callback_handlers.handle_refresh_link,
                 pattern="^refresh_link$"
+            ),
+
+            # ✅ تأكد من وجود هذا المعالج
+            CallbackQueryHandler(
+                self.callback_handlers.handle_send_to,
+                pattern="^send_to_"
             ),
 
             # دوال الأدمن
