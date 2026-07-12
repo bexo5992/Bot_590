@@ -212,7 +212,7 @@ class UserHandlers:
             # جلب اسم المرسل
             sender = await self.db.get_user(msg.from_user_id)
             sender_name = sender.first_name if sender else f"مستخدم {msg.from_user_id}"
-            text += f"{status} من: **{sender_name}**\n📝 {msg.message[:50]}...\n📅 {msg.date.strftime('%Y-%m-%d %H:%M')}\n\n"
+            text += f"{status} من: **{شخص مجهول 🫥🫥}**\n📝 {msg.message[:50]}...\n📅 {msg.date.strftime('%Y-%m-%d %H:%M')}\n\n"
 
         await query.edit_message_text(
             text,
